@@ -214,7 +214,9 @@ async def test_gemini_adapter_round_trip(connect):
     assert config.system_instruction == SYSTEM_INSTRUCTION
     names = [d.name for d in config.tools[0].function_declarations]
     assert names == ["get_financial_fact", "calculate"]
-    assert config.tool_config.function_calling_config.allowed_function_names == names
+    # Gemini rejects allowed_function_names unless mode is ANY (found in the first live run).
+    fcc = config.tool_config.function_calling_config
+    assert fcc.mode == "AUTO" and fcc.allowed_function_names is None
     assert "$ref" not in str(config.tools[0].function_declarations[0].parameters_json_schema)
 
     # Second request: question, model's call, then our function response with the same id.

@@ -33,6 +33,7 @@ class ToolCall:
 class ModelTurn:
     text: str
     tool_calls: list[ToolCall] = field(default_factory=list)
+    finish_reason: str | None = None
 
 
 class BackendError(RuntimeError):
@@ -81,6 +82,7 @@ class GeminiBackend:
     name = "gemini"
     RETRY_CODES = frozenset({429, 500, 503})
     MAX_RETRIES = 3
+    REQUEST_TIMEOUT_SECONDS = 120
 
     def __init__(
         self,
@@ -92,10 +94,17 @@ class GeminiBackend:
         min_interval: float = 0.0,
     ) -> None:
         from google import genai
+        from google.genai import types
 
         self.model = model
         self.settings = settings
-        self._client = client if client is not None else genai.Client(api_key=api_key)
+        self._client = (
+            client
+            if client is not None
+            else genai.Client(
+                api_key=api_key, http_options=types.HttpOptions(timeout=self.REQUEST_TIMEOUT_SECONDS * 1000)
+            )
+        )
         self._pacer = _Pacer(min_interval)
 
     def start(self, system_instruction: str, question: str, tools: list[ToolSpec] | None) -> _GeminiConv:
@@ -113,10 +122,10 @@ class GeminiBackend:
                     ]
                 )
             ]
+            # Gemini accepts allowed_function_names only with mode ANY (which forces a call every
+            # turn). With AUTO, the allowlist is enforced by the adapter in agent.py instead.
             kwargs["tool_config"] = types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(
-                    mode="AUTO", allowed_function_names=[t.name for t in tools]
-                )
+                function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             )
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -149,6 +158,13 @@ class GeminiBackend:
                     continue
                 detail = str(getattr(exc, "message", "") or "")[:300]
                 raise BackendError(f"Gemini API error {code} {getattr(exc, 'status', '')}: {detail}") from None
+            except httpx.HTTPError as exc:  # Timeouts and connection failures.
+                if attempt < self.MAX_RETRIES:
+                    delay = min(60.0, 10.0 * 2**attempt)
+                    log.warning("Gemini request failed (%s); retrying in %.0fs", type(exc).__name__, delay)
+                    await asyncio.sleep(delay)
+                    continue
+                raise BackendError(f"Gemini request failed: {type(exc).__name__}") from None
 
         candidates = response.candidates or []
         if not candidates or candidates[0].content is None:
@@ -165,7 +181,12 @@ class GeminiBackend:
                 calls.append(ToolCall(name=fc.name or "", args=dict(fc.args or {}), id=fc.id))
             elif part.text and not part.thought:
                 text_parts.append(part.text)
-        return ModelTurn(text="".join(text_parts).strip(), tool_calls=calls)
+        reason = candidates[0].finish_reason
+        return ModelTurn(
+            text="".join(text_parts).strip(),
+            tool_calls=calls,
+            finish_reason=getattr(reason, "value", None) or (str(reason) if reason else None),
+        )
 
     def add_tool_results(self, conv: _GeminiConv, results: list[tuple[ToolCall, dict[str, Any]]]) -> None:
         from google.genai import types

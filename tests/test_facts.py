@@ -71,6 +71,26 @@ def test_falls_back_to_next_tag_variation_and_says_so():
     assert "Higher-priority tags had no matching fact" in r["selection"]["explanation"]
 
 
+def test_own_10k_beats_higher_priority_tag_from_later_filing():
+    # Mirrors Amazon FY2016 (found in the first live run): the FY2016 10-K used SalesRevenueNet;
+    # RevenueFromContractWithCustomer... only appears as a comparative in a later 10-K.
+    doc = facts_doc(
+        {
+            "RevenueFromContractWithCustomerExcludingAssessedTax": {
+                "USD": [fact(990, "2016-12-31", start="2016-01-01", fy=2018, accn="LATER", filed="2019-02-01")]
+            },
+            "SalesRevenueNet": {
+                "USD": [fact(1000, "2016-12-31", start="2016-01-01", fy=2016, accn="OWN", filed="2017-02-10")]
+            },
+        }
+    )
+    r = select_fact(doc, "revenue", 2016)
+    assert r["status"] == "ok" and r["value"] == 1000
+    assert r["tag"] == "SalesRevenueNet" and r["accession_number"] == "OWN"
+    assert r["selection"]["confidence"] == "high"
+    assert r["alternatives"] == [{"tag": "RevenueFromContractWithCustomerExcludingAssessedTax", "values": [990]}]
+
+
 def test_lower_priority_tag_disagreement_is_reported():
     doc = facts_doc(
         {

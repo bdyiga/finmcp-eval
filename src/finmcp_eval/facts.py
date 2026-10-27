@@ -12,9 +12,9 @@ How a fact is selected
    fiscal year's end date is the latest annual-period end date in the filing.
 3. For each candidate US-GAAP tag (priority order from schemas.METRICS), keep facts
    whose period ends on that date (and, for flow metrics such as revenue, whose
-   period is about one year long). Values from the fiscal year's own 10-K win; a
-   later filing reporting a different value for the same period is listed as a
-   possible restatement.
+   period is about one year long). Values from the fiscal year's own 10-K win, even
+   over a higher-priority tag that only appears in later filings; a later filing
+   reporting a different value for the same period is listed as a possible restatement.
 4. If those facts disagree with each other, return "ambiguous" with the
    candidates instead of picking one.
 5. If no filing is labeled with the fiscal year, fall back to annual facts whose
@@ -80,7 +80,12 @@ def select_fact(doc: dict[str, Any], metric: str, fiscal_year: int, ticker: str 
             "available_fiscal_years": available_fiscal_years(gaap, spec),
         }
 
-    tag, facts = matches[0]
+    # Prefer the fiscal year's own 10-K over tag priority: companies change tags over time
+    # (e.g. SalesRevenueNet before ASC 606), so a higher-priority tag may only appear in a
+    # later filing's comparatives, which can hold restated values.
+    tag, facts = next(
+        ((t, fs) for t, fs in matches if _split_primary(fs, fiscal_year, method)[0]), matches[0]
+    )
     primary, later = _split_primary(facts, fiscal_year, method)
     pool = primary or later
     if not primary:
@@ -108,7 +113,7 @@ def select_fact(doc: dict[str, Any], metric: str, fiscal_year: int, ticker: str 
     chosen = _sorted(pool)[0]  # Earliest-filed of identical values: the original report.
     notes: list[str] = []
     if tag != spec.tags[0]:
-        notes.append(f"Higher-priority tags had no matching fact; used {tag}.")
+        notes.append(f"Higher-priority tags had no matching fact in this fiscal year's 10-K; used {tag}.")
     restated = sorted({f["val"] for f in later if f["val"] != chosen["val"]}) if primary else []
     if restated:
         notes.append(
@@ -116,7 +121,9 @@ def select_fact(doc: dict[str, Any], metric: str, fiscal_year: int, ticker: str 
             "possibly a restatement. Returned the value from the fiscal year's own 10-K."
         )
     alternatives = []
-    for alt_tag, alt_facts in matches[1:]:
+    for alt_tag, alt_facts in matches:
+        if alt_tag == tag:
+            continue
         alt_vals = sorted({f["val"] for f in alt_facts})
         if alt_vals != [chosen["val"]]:
             alternatives.append({"tag": alt_tag, "values": alt_vals[:5]})

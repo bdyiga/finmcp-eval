@@ -1,0 +1,3 @@
+question_id,question,correct_answer,ticker,metric,fiscal_year,question_type,financebench_id,company_name,answer_unit,notes
+q01,What is the FY2018 capital expenditure amount (in USD millions) for 3M? Give a response to the question by relying on the details shown in the cash flow statement.,$1577.00,MMM,capital_expenditures,2018,lookup,financebench_id_03029,3M,USD millions,3M_2018_10K
+q02,What is Amazon's year-over-year change in revenue from FY2016 to FY2017 (in units of percents and round to one decimal place)? Calculate what was asked by utilizing the line items clearly shown in the statement of income.,30.8%,AMZN,revenue,2016;2017,calculation,financebench_id_08135,Amazon,%,AMAZON_2017_10K
